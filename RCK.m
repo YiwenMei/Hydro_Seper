@@ -1,78 +1,133 @@
-% Yiwen Mei
-% University of Connecticut
-% 10/04/2016
+% Yiwen Mei (yiwen.mei@uconn.edu)
+% CEE, University of Connecticut
+% Last updated on 10/20/2017
 
-% Description:
-% The code a) locate the turning points of the hydrograph; b) calculate the
-% maximum baseflow index & recession coefficient and c) separate baseflow
-% from streamflow by the RCK methods; 
+%% Functionality:
+% This code performs recession analysis by fitting a recession model on streamflow
+% time series to
+%  1) locate turning points of the streamflow series;
+%  2) construct baseflow time series by connecting all turning points with straight
+%     lines; and
+%  3) calculate the recession coefficient and maximum baseflow index of the basin;
 
-% Inputs:
-% flow: Streamflow time series in mm/h
-%  p1 : Half-regression period (half length of the period to calculate the
-%       recession constant)
-%  p2 : Constant slope threshold (1e-7 min-2 is suggested in Blume et al.
-%       2007)
-%  p3 : Minimu acceptabe r2 (r2 statistics of the t vs. ln(Q) corellation).
-%  p4 : Upper limit of baseflow rate
-%  p5 : Low slope (-dQ/dt)
+%% Inputs
+%  Q : streamflow time series for a basin (mm/h);
+%  A : basin size (km^2);
+%  n : parameter determines the order of the recession model fitted to the streamflow
+%      time series (i.e., dQ/dt=-kQ^n);
+% Rnc: threshold to define no changes in recession coefficient;
+% r2M: coefficient of determination threshold to define acceptable model fitting
+%      peformance;
+% LRW: length of regression window (h, if it is set to [], the code estimate
+%      LRW based on the basin size);
+% Obi: baseflow time series (if it is set to [], the moving average algorithm
+%      is evoked);
+% TC : full name of the .mat file to store the flow time series characteristics
+%      (i.e. change rate of flow dQ/dt, recession coefficient k, logarithmic
+%      change rate of recesssion coefficient dk).
 
-% Outputs:
-%   TS   : Baseflow time series
-% pt.RiPs: Location of points in rising limb
-% pt.RePs: Location of points in recession limb
-%   Sc   : Recession coefficient K
-%  BFIm  : Maximum baseflow index
+%% Outputs:
+% pt.RiP: potential time steps used to define start of flow events; 
+% pt.ReP: potential time steps used to define end of flow events;
+%   Qb  : baseflow time series formed by connecting points in pt with straight
+%         lines;
+%   K   : recession coefficient of the basin;
+%  BFIm : maximum baseflow index of the basin.
 
-function [TS,pt,Sc,BFIm]=RCK(flow,p1,p2,p3,p4,p5)
+function [pt,Qb,K,BFIm]=RCK(Q,A,n,Rnc,r2M,LRW,Qbi,TC)
+Q(Q==0)=NaN;
+T=1:length(Q);
+LSP=.827*24*A^.2; % Empirical estimate of length of recession
 
-k=NaN(length(flow),4);
-for t=p1+1:length(flow)-p1
-  x=(t-p1:t+p1)';
-  X=[ones(length(x),1) x];
-  y=flow(x);
-  z=log(flow(x));
-  if length(find(~isnan(y)))>4
-    [b,~,~,~,~]=regress(y,X);
-    k(t,1)=-b(2); % Slope for every time step
-
-    [b1,~,~,~,r]=regress(z,X);
-    k(t,2)=-b1(2); % Recession coefficient for every time step
-    k(t,3)=r(1); % r2 stats for every time step
-  end
+% Determine the length of regression window
+if isempty(LRW)
+  idx=mod(LSP/5+1,2)<1;
+  LRW=floor(LSP/5+1); % Maintain 80% of point
+  LRW(idx)=LRW(idx)+1;
 end
 
-k(1:size(k,1)-1,4)=diff(k(:,2)); % Change of slope in h-2
-k(isnan(flow) | isnan(k(:,4)),:)=NaN;
+%% Fitting recession model
+if exist(TC,'file')~=2
+  dQdt=nan(size(Q));
+  k=nan(size(Q));
+  r2=nan(size(Q));
+  dk=nan(size(Q));
 
-c=find(abs(k(:,4))<=p2 & k(:,3)>=p3 & k(:,1)>p5 & ~isnan(flow)); % criteria p4 is not
-[f,~,~,~,~]=regress(k(c,1),[ones(length(c),1) flow(c)]); % considered here
-K=f(2);
+  for t=(LRW-1)/2+1:length(Q)-(LRW-1)/2
+    ti=(t-(LRW-1)/2:t+(LRW-1)/2)';
+    y=Q(ti);
+    if length(find(~isnan(y)))>.5*LRW
+      X=[ones(length(ti),1) ti];
 
-Qck=flow;
-Qck(abs(k(:,4))>p2 | k(:,3)<p3 | flow>p4 | k(:,1)<p5 | isnan(flow))=NaN; % Select the points
-Qck([1:p1 length(flow)-p1+1:length(flow)])=NaN;
+      [b,~,~,~,~]=regress(y,X);
+      dQdt(t)=b(2); % Change rate of flow dQ/dt (L/T^2)
+    end
 
-RePs=find(Qck>=0);
+    if n==1
+      y=log(Q(ti)); % dQ/Q
+    else
+      y=Q.^(1-n)/(1-n); % dQ/Q^n
+    end
+    if length(find(~isnan(y)))>.5*LRW
+      X=[ones(length(ti),1) ti];
 
-rp=find(flow<=p4 & k(:,3)<p3);
-idx=0;
-for t=2:length(rp)-1
-  if flow(rp(t))<=flow(rp(t-1)) && flow(rp(t))<flow(rp(t+1))
-    idx=idx+1;
-    RiPs(idx,1)=rp(t);
+      [b,~,~,~,r]=regress(y,X);
+      k(t)=-b(2); % Recession coefficient k (T^(n-2)/L^(n-1))
+      r2(t)=r(1); % Coefficient of determination
+    end
+
+    y=k(ti);
+    if length(find(~isnan(y)))>.5*LRW
+      X=[ones(length(ti),1) ti];
+
+      [b,~,~,~,~]=regress(y,X);
+      dk(t)=log(abs(b(2))); % change rate of k (T^(n-3)/L^(n-1))
+    end
   end
+  save(TC,'dQdt','k','r2','dk');
+
+else
+  load(TC);
 end
 
-TPs=unique([1;RiPs;RePs;length(flow)]);
+%% Determine the turning points
+% Envelope of baseflow
+ben=[nan(2*round(LSP),1);movmean(Q,[2*round(LSP) 2*round(LSP)],'omitnan','Endpoints',...
+    'discard');nan(2*round(LSP),1)];
 
-CK_sl=interp1(TPs,flow(TPs),(1:length(flow))'); % RCK Baseflow time series
-CK_sl(CK_sl<0)=0;
-CK_sl(CK_sl>flow)=flow(CK_sl>flow);
-CK_sl(isnan(flow))=NaN;
+% RiPs and RePs
+if isempty(Qbi)
+%   ben=[nan(2*round(LRE),1);movmean(Q,[2*round(LRE) 2*round(LRE)],'omitnan','Endpoints',...
+%       'discard');nan(2*round(LRE),1)];
+  Qbi=ben;
+  Qbi(Qbi>Q)=Q(Qbi>Q);
+% else
+%   ben=Qbi;
+end
+BFI=nansum(Qbi)/nansum(Q);
 
-pt.RiPs=RiPs;
-pt.RePs=RePs;
-Sc=K;
-TS=CK_sl;
-BFIm=nansum(CK_sl)/nansum(flow);
+benb=[nan(LRW,1);movmean(Q,[LRW 0],'omitnan','Endpoints','discard')];
+bena=[movmean(Q,[0 LRW],'omitnan','Endpoints','discard');nan(LRW,1)];
+Rr=bena./benb;
+
+RiP=T(dQdt>1e-10 & Q<=ben & Rr>1/BFI);
+ReP=T(dk<Rnc & r2>r2M & Q<=ben);
+% plot(Q);hold on;plot(pt.ReP,Q(pt.ReP),'*');hold on;plot(pt.RiP,Q(pt.RiP),'*');
+% plot(Q);hold on;plot(Qb);hold on;plot(ben)
+pt.RiP=RiP;
+pt.ReP=ReP;
+clear RiP ReP
+
+%% Baseflow time series
+Qb=interp1(union(pt.RiP,pt.ReP),Q(union(pt.RiP,pt.ReP)),T');
+Qb(Qb<0)=0;
+Qb(Qb>Q)=Q(Qb>Q);
+Qb(isnan(Q))=NaN;
+BFIm=nansum(Qb)/nansum(Q); % Baseflow index
+
+% Recession coefficient
+id1=~isnan(dk) & ~isnan(r2) & dQdt<-1e-8;
+[b,~,~,~,~]=regress(dQdt(id1),[ones(length(Q(id1)),1) Q(id1)]);
+% loglog(Q(id1),dQdt(id1),'.')
+K=-b(2);
+end

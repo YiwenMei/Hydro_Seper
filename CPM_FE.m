@@ -7,22 +7,23 @@
 
 %% Inputs
 % peak: Location of peak flow;
-%  pts: points in rising and recession limb;
+%  RiP: points in rising limb;
+%  ReP: points in recession limb;
 %   Q : flow time series (mm/h).
 
 %% Output
 % FE: Locations (the n-th hour of the begin, peak and end) of flow events
 
-function FE=CPM_FE(peak,pts,Q)
+function FE=CPM_FE(peak,RiP,ReP,Q)
 
 PE=nan(length(peak),3); % length(peak)-1
 for x=1:length(peak) % length(peak)-1
-  rip=find(peak(x)-pts.RiPs>0,1,'last');
-  rep=find(peak(x)-pts.RePs<0,1,'first');
+  rip=find(peak(x)-RiP>0,1,'last');
+  rep=find(peak(x)-ReP<0,1,'first');
   if ~isempty(rip) && ~isempty(rep)
-    PE(x,1)=pts.RiPs(rip);
+    PE(x,1)=RiP(rip);
     PE(x,2)=peak(x);
-    PE(x,3)=pts.RePs(rep);
+    PE(x,3)=ReP(rep);
   end
 end
 PE(isnan(PE(:,1)),:)=[];
