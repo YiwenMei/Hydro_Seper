@@ -27,46 +27,45 @@ end
 
 %% Event identification
 % Locate the peak flow rate from the long-term hydrograph
-LSP=.827*24*A^.2;
-Pks=CPM_peak(Q, LSP, Qbf);
+Pks=CPM_peak(Q, A, Qbf);
 
 % Formation of flow events
 FE=CPM_FE(Pks, pt.RiP, pt.ReP, Q);
 
 % Formation of rainfall episodes
-RE=CPM_RE(P, 0, 0);
-
-RE(RE(:, 3)==1 | RE(:, 4)./RE(:, 3)<=.01, :)=[]; % Remove the minor episodes
+RE=CPM_RE(P, [], []);
+RE(RE(:,3)==1 | RE(:,4)./RE(:,3)<=.01, :)=[]; % Remove the minor episodes
 
 % Event association
-mlag=[LSP;0;0;0;0]; % Initialize mlag by LSP
+mlag=nan(4,1);
 for y=1:4
-    RFE=CPM(Q, P, Qbf, FE, RE, LSP, mlag(y));
+  if y==1
+    RFE=CPM(Q, P, Qbf, FE, RE, A, []);
+  else
+    RFE=CPM(Q, P, Qbf, FE, RE, A, mlag(y));
+  end
 
-    k=find(isnan(RFE.tE(:, 1))); % Remove the non-associable
-    if ~isempty(k)               % flood events
-        RFE.D(k, :)=[];
-        RFE.V(k, :)=[];
-        RFE.tE(k, :)=[];
-        RFE.R(k, :)=[];
-    end
+  k=find(isnan(RFE.tE(:,1))); % Remove the non-associable events
+  if ~isempty(k)
+    RFE.D(k,:)=[];
+    RFE.V(k,:)=[];
+    RFE.tE(k,:)=[];
+    RFE.R(k,:)=[];
+  end
 
-    lag=RFE.D(:, 3);
-    lag(RFE.D(:, 3)<0 |  RFE.R(:, 1)>1 | ...
-        RFE.D(:, 3)==max(RFE.D(:, 3)))=[];
-    mlag(y+1)=mean(lag); % update mlag for every iteration
+  lag=RFE.D(:,3);
+  lag(RFE.D(:,3)<0 |  RFE.R(:,1)>1 | RFE.D(:,3)==max(RFE.D(:,3)))=[];
+  mlag(y)=mean(lag); % update mlag for every iteration
 end
 
 %% Extra Filters
-k=find(RFE.D(:, 3)<0 | RFE.R(:, 1)>1 | RFE.V(:, 2)./RFE.D(:, 2)<nanmean(Q));
-
-RFE.D(k, :)=[];
-RFE.V(k, :)=[];
-RFE.tE(k, :)=[];
-RFE.R(k, :)=[];
+k=find(RFE.D(:,3)<0 | RFE.R(:,1)>1 | RFE.V(:,2)./RFE.D(:,2)<nanmean(Q));
+RFE.D(k,:)=[];
+RFE.V(k,:)=[];
+RFE.tE(k,:)=[];
+RFE.R(k,:)=[];
 
 %% Save data
 paTab=table(A,K,BFIm,LSP,mlag(length(mlag)),'VariableNames',{'Area','ReceCoef',...
-    'meanBFI','SearchLen','meanTlag'},'RowNames',['B' num2str(i,'%i')]);
-
-save([inpth 'Results_' num2str(i,'%i')],'RFE','paTab','Qbf');
+    'meanBFI','SearchLen','meanTlag'},'RowNames',{'XXX'});
+save('XXX','RFE','paTab','Qbf');
