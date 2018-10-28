@@ -15,6 +15,13 @@
 %     events.
 
 function RE=CPM_RE(rain,LMG,r0)
+if isempty(LMG)
+  LMG=0;
+end
+if isempty(r0)
+  r0=0;
+end
+
 rm=nanmean(rain);
 
 P=rain;

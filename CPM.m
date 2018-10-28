@@ -10,10 +10,10 @@
 %  Q  : streamflow time series (mm/h);
 %  P  : rainfall time series (mm/h);
 %  Qb : baseflow time series (mm/h);
-%  FE : timing of flow events (begin, end, and peak)
-%  RE : timing of rainfall episodes (begin, end, and centroid)
+%  FE : timing of flow events (begin, end, and peak);
+%  RE : timing of rainfall episodes (begin, end, and centroid);
 %  A  : basin size (km^2);
-% mlag: Mean event time lag (h).
+% mlag: Mean event time lag (h, if it is [], LSP is used).
 
 %% Output
 % Mat_RE.D : Durations of rainfall event, flow event and event time lag
@@ -25,6 +25,9 @@
 
 function Mat_RE=CPM(Q,P,Qb,FE,RE,A,mlag)
 LSP=.827*24*A^.2;
+if isempty(mlag)
+  mlag=LSP;
+end
 
 if ~isempty(FE(:,1))
   sh=sort(FE(:,1));
