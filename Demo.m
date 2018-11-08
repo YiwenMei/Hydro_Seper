@@ -1,3 +1,4 @@
+
 addpath('XXX');
 inpth='XXX';
 load([inpth 'Demo_data'])
@@ -66,6 +67,8 @@ RFE.tE(k,:)=[];
 RFE.R(k,:)=[];
 
 %% Save data
+LSP=.827*24*A^.2;
+paTab.Properties.VariableUnits={'km^2','h^(-1)','','h','h'};
 paTab=table(A,K,BFIm,LSP,mlag(length(mlag)),'VariableNames',{'Area','ReceCoef',...
     'meanBFI','SearchLen','meanTlag'},'RowNames',{'XXX'});
 save('XXX','RFE','paTab','Qbf');
