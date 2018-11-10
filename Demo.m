@@ -9,7 +9,7 @@ Q=3.6*Q/A;
 Q(Q==0)=NaN;
 
 n=1;
-TCout='XXX.mat';
+TCout=sprintf('XXX_%i.mat',n);
 
 BFI=nan(6,1);
 for y=1:6
@@ -68,7 +68,7 @@ RFE.R(k,:)=[];
 
 %% Save data
 LSP=.827*24*A^.2;
-paTab.Properties.VariableUnits={'km^2','h^(-1)','','h','h'};
 paTab=table(A,K,BFIm,LSP,mlag(length(mlag)),'VariableNames',{'Area','ReceCoef',...
     'meanBFI','SearchLen','meanTlag'},'RowNames',{'XXX'});
+paTab.Properties.VariableUnits={'km^2','h^(n-2)/mm^(n-1)','','h','h'};
 save('XXX','RFE','paTab','Qbf');
