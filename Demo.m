@@ -1,34 +1,39 @@
+function Demo()
+addpath('C:\Fun_pool\Hysep_tool');
+addpath('C:\Fun_pool\Drought_tool');
 
-addpath('XXX');
-inpth='XXX';
-load([inpth 'Demo_data'])
+ipth='C:\Fun_pool\Hysep_tool';
+fn=fullfile(ipth,'Demo_data.mat');
+load(fn,'A','P','Q');
 
-%% Recession analysis and baseflow separation
 % Convert the units to mm/h
 Q=3.6*Q/A;
 Q(Q==0)=NaN;
 
+%% Recession analysis and baseflow separation
 n=1;
-TCout=sprintf('XXX_%i.mat',n);
+Rnc=10e-6;
+r2x=.9;
+
+ofn=fullfile(ipth,'TC.mat');
 
 BFI=nan(6,1);
 for y=1:6
-% Find the rise and recession points  
+% Find the rise and recession points
   if y==1
-    [pt, Qbf, K, ~]=RCK(Q, A, n, -11.5, .9, [], [], TCout);
+    [pt,Qbf,BFIx,K,r,LSP]=RCK(Q,24,A,ofn,false,Rnc,r2x,NaN,n);
   else
-    [pt, Qbf, K, ~]=RCK(Q, A, n, -11.5, .9, [], Qbf, TCout);
+    [pt,Qbf,BFIx,K,r,LSP]=RCK(Q,24,A,ofn,false,Rnc,r2x,BFIx,n);
   end
 
 % Filter the baseflow time series 
-  [Qbf, BFIm]=FRCK(Q, Qbf, K);
-
-  BFI(y,:)=BFIm;
+  [Qbf,BFIx]=RDF(Q,BFIx,K,Qbf);
+  BFI(y,:)=BFIx;
 end
 
 %% Event identification
 % Locate the peak flow rate from the long-term hydrograph
-Pks=CPM_peak(Q, A, Qbf);
+Pks=CPM_peak(Q,LSP);
 
 % Formation of flow events
 FE=CPM_FE(Pks, pt.RiP, pt.ReP, Q);
@@ -60,15 +65,17 @@ for y=1:4
 end
 
 %% Extra Filters
-k=find(RFE.D(:,3)<0 | RFE.R(:,1)>1 | RFE.V(:,2)./RFE.D(:,2)<nanmean(Q));
+k=find(RFE.D(:,3)<0 | RFE.R(:,1)>1 | RFE.V(:,2)./RFE.D(:,2)<mean(Q,'omitnan'));
 RFE.D(k,:)=[];
 RFE.V(k,:)=[];
 RFE.tE(k,:)=[];
 RFE.R(k,:)=[];
 
 %% Save data
-LSP=.827*24*A^.2;
-paTab=table(A,K,BFIm,LSP,mlag(length(mlag)),'VariableNames',{'Area','ReceCoef',...
-    'meanBFI','SearchLen','meanTlag'},'RowNames',{'XXX'});
-paTab.Properties.VariableUnits={'km^2','h^(n-2)/mm^(n-1)','','h','h'};
-save('XXX','RFE','paTab','Qbf');
+paTab=table(A,K,BFIx,LSP,mlag(length(mlag)),'VariableNames',{'Area','ResC',...
+    'BFIx','LSP','Tl_m'},'RowNames',{'XXX'});
+paTab.Properties.VariableUnits={'km^2','h^(n-2)/mm^(n-1)','-','h','h'};
+
+ofn=fullfile(pth,'Demo_O.mat');
+save(ofn,'RFE','paTab','Qbf');
+end
