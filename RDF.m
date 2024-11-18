@@ -1,40 +1,77 @@
-% Yiwen Mei
-% University of Connecticut
-% 11/17/2012
+% Yiwen Mei (yiwen.mei@uconn.edu)
+% CEE, University of Connecticut
+% Last updated on 10/6/2022
 
-% Description:
-% The code construct the baseflow time series by using the recursive
-% digital filter (following Eckhardt, 2005)
+%% Functionality:
+% This code implements the recursive digital filter (RDF, Eckhardt, 2005) and
+%  the filtered UKIH method (FUKIH, Aksoy et al. 2009). In the second case, the
+%  UKIH-based baseflow time series must be provided as an optional input.
 
-% Inputs:
-% flow: Streamflow time series
-% BFIm: Maximum baseflow index
-%  K  : Recession coefficient (note that a=exp(-Kt))
+%% Inputs
+%  Q  : streamflow time series for a basin (m3/time step or mm/time step);
+% BFIm: maximum baseflow index;
+%  a  : recession constant (note that a=exp(-Kt))
 
-% Outputs:
-% Qbr: Baseflow time series
+% Qb0: initial baseflow time series of the same size as Q.
 
-function [Qb,BFI]=RDF(Q,BFIm,K)
-a=exp(-K);
+%% Outputs:
+%  Qb : baseflow time series of the same resolution and unit as Q; 
+% BFI : long-term baseflow index of the basin based on RDF;
+% N_bp: number of time step with negative baseflow and baseflow larger than streamflow.
 
-Q_flip=flipud(Q);
-Qb_flip=Q_flip;
-for t=2:length(Q)
-  Qb_flip(t)=((1-BFIm)*a*Qb_flip(t-1)+(1-a)*BFIm*Q_flip(t))/(1-a*BFIm);
-end
+function [Qb,BFI,N_bp]=RDF(Q,BFIm,a,varargin)
+%% Check the inputs
+narginchk(3,4);
+ips=inputParser;
+ips.FunctionName=mfilename;
 
-Qb=flipud(Qb_flip);
-for t=2:length(Q)
-  Qb(t)=((1-BFIm)*a*Qb(t-1)+(1-a)*BFIm*Q(t))/(1-a*BFIm);
-end
+addRequired(ips,'Q',@(x) validateattributes(x,{'double'},{'vector','nonnegative'},mfilename,'Q'));
+addRequired(ips,'BFIm',@(x) validateattributes(x,{'double'},{'scalar','<',1,'>',0},mfilename,'BFIm'));
+addRequired(ips,'a',@(x) validateattributes(x,{'double'},{'scalar','<',1,'>',0},mfilename,'a'));
 
-for t=1:length(Q)
-  if Qb(t)<0
-    Qb(t)=0;
-  elseif Qb(t)>Q(t)
-    Qb(t)=Q(t);
+addOptional(ips,'Qb0',[],@(x) validateattributes(x,{'double'},{'vector','nonnegative'},mfilename,'Qb0'));
+
+parse(ips,Q,BFIm,a,varargin{:});
+Qb0=ips.Results.Qb0;
+clear ips varargin
+
+%% Determine the segments
+TSi=~isnan(Q);
+k=Run_Length(TSi,true,Q);
+k=reshape(k',2,length(k)/2)';
+k(k(:,1)==1,1)=1:sum(k(:,1));
+TSi=Run_Length(reshape(k(:,1:2)',size(k,1)*2,1),false,[])';
+
+%% Baseflow for every segment
+Qb=nan(size(Q));
+for i=1:max(TSi)
+  q=Q(TSi==i);
+  if length(q)>1
+
+% Without initial baseflow (RDF)
+    qb=nan(size(q));
+    if isempty(Qb0)
+      qb(1)=BFIm*q(1);
+      for j=2:length(q)
+        qb(j)=((1-BFIm)*a*qb(j-1)+(1-a)*BFIm*q(j))/(1-a*BFIm);
+      end
+
+% With initial baseflow (FUKIH)
+    else
+      qb0=Qb0(TSi==i);
+      for j=2:length(q)
+        qb(j)=((1-BFIm)*a*qb0(j-1)+(1-a)*BFIm*q(j))/(1-a*BFIm);
+      end
+    end
+    Qb(TSi==i)=qb;
   end
 end
 
-BFI=nansum(Qb)/nansum(Q);
+N_bp=sum(Qb<0 | Qb>Q);
+Qb(Qb<0)=0; % baseflow must be greater than 0 and lower than total flow
+Qb(Qb>Q)=Q(Qb>Q);
+
+%% Calculate the baseflow index
+k=any(isnan([Qb Q]),2);
+BFI=sum(Qb(~k),'omitnan')/sum(Q(~k),'omitnan');
 end

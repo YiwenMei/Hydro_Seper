@@ -1,6 +1,6 @@
 % Yiwen Mei (yiwen.mei@uconn.edu)
 % CEE, University of Connecticut
-% Last updated on 10/20/2017
+% Last updated on 9/22/2022
 
 %% Functionality:
 % This code performs recession analysis by fitting a recession model on streamflow
@@ -12,19 +12,20 @@
 
 %% Inputs
 %  Q : streamflow time series for a basin (mm/h);
+% sc : number of time step in a day (e.g. if Q is hourly, sc is 24; if Q is daily,
+%       sc is 1);
 %  A : basin size (km^2);
-%  n : parameter determines the order of the recession model fitted to the streamflow
-%      time series (i.e., dQ/dt=-kQ^n);
-% Rnc: threshold to define no changes in recession coefficient;
-% r2M: coefficient of determination threshold to define acceptable model fitting
-%      peformance;
-% LRW: length of regression window (h, if it is set to [], the code estimate
-%      LRW based on the basin size);
-% Obi: baseflow time series (if it is set to [], the moving average algorithm
-%      is evoked);
-% TC : full name of the .mat file to store the flow time series characteristics
-%      (i.e. change rate of flow dQ/dt, recession coefficient k, logarithmic
-%      change rate of recesssion coefficient dk).
+% ofn: full name of the .mat file to store the flow time series characteristics
+%       (i.e. change rate of flow dQ/dt, recession coefficient k, logarithmic
+%       change rate of recesssion coefficient dk);
+
+% pflg: parallel flag (false/true - squential/parallel, default is false);
+% Rnc : threshold to define no changes in recession coefficient;
+% r2M : coefficient of determination threshold to define acceptable model fitting
+%        peformance;
+% BFIi: initial guess of baseflow index;
+%  n  : parameter determines the order of the recession model fitted to the streamflow
+%        time series (i.e., dQ/dt=-kQ^n);
 
 %% Outputs:
 % pt.RiP: potential time steps used to define start of flow events; 
@@ -34,100 +35,170 @@
 %   K   : recession coefficient of the basin;
 %  BFIm : maximum baseflow index of the basin.
 
-function [pt,Qb,K,BFIm]=RCK(Q,A,n,Rnc,r2M,LRW,Qbi,TC)
-Q(Q==0)=NaN;
-T=1:length(Q);
-LSP=.827*24*A^.2; % Empirical estimate of length of recession
+function [pt,Qb,BFIm,K,r,LSP]=RCK(Q,sc,A,ofn,varargin)
+%% Check the inputs
+narginchk(4,9);
+ips=inputParser;
+ips.FunctionName=mfilename;
 
+addRequired(ips,'Q',@(x) validateattributes(x,{'double'},{'nonempty'},mfilename,'Q'));
+addRequired(ips,'sc',@(x) validateattributes(x,{'double'},{'nonempty'},mfilename,'sc'));
+addRequired(ips,'A',@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'A'));
+addRequired(ips,'ofn',@(x) validateattributes(x,{'char'},{'nonempty'},mfilename,'ofn'));
+
+addOptional(ips,'pflg',false,@(x) validateattributes(x,{'logical'},{'nonempty'},mfilename,'pflg'));
+addOptional(ips,'Rnc',1e-5,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'Rnc'));
+addOptional(ips,'r2M',.85,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'r2M'));
+addOptional(ips,'BFIi',NaN,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'BFIi'));
+addOptional(ips,'n',1,@(x) validateattributes(x,{'double'},{'scalar','integer'},mfilename,'n'));
+
+parse(ips,Q,sc,A,ofn,varargin{:});
+pflg=ips.Results.pflg;
+Rnc=ips.Results.Rnc;
+r2M=ips.Results.r2M;
+BFIi=ips.Results.BFIi;
+n=ips.Results.n;
+clear ips varargin
+
+%% Streamflow characteristics
 % Determine the length of regression window
-if isempty(LRW)
-  idx=mod(LSP/5+1,2)<1;
-  LRW=floor(LSP/5+1); % Maintain 80% of point
-  LRW(idx)=LRW(idx)+1;
-end
+LRW_i=5; % Minimum size of regression window
+LSP=.827*sc*A^.2; % Length of recession; .827 convert (km^2)^.2 to (mi^2)^.2
+LRW=floor(LSP/5+1); % Maintain 80% of point
+LRW=max(LRW_i,LRW);
 
-%% Fitting recession model
-if exist(TC,'file')~=2
-  dQdt=nan(size(Q));
-  k=nan(size(Q));
-  r2=nan(size(Q));
-  dk=nan(size(Q));
+% Fitting recession model to find dQ/dt, k, r2, and dk/dt 
+Qs=[nan(floor((sc-1)/2),1);movmean(Q,[floor((sc-1)/2) ceil((sc-1)/2)],'Endpoints','discard');...
+    nan(ceil((sc-1)/2),1)]; % Moving average of a daily window
+Q(Q==0)=NaN;
+Qs(Qs==0 | isnan(Q))=NaN;
 
-  for t=(LRW-1)/2+1:length(Q)-(LRW-1)/2
-    ti=(t-(LRW-1)/2:t+(LRW-1)/2)';
-    y=Q(ti);
-    if length(find(~isnan(y)))>.5*LRW
-      X=[ones(length(ti),1) ti];
+if exist(ofn,'file')~=2
+  dQdt=nan(size(Qs));
+  k=nan(size(Qs));
+  r2=nan(size(Qs));
+  dk=nan(size(Qs));
 
-      [b,~,~,~,~]=regress(y,X);
-      dQdt(t)=b(2); % Change rate of flow dQ/dt (L/T^2)
-    end
+  T=(LRW-1)/2+1:length(Qs)-(LRW-1)/2;
+  switch pflg
+    case true
+      parfor t=1:length(T)
+        [b1,b2,r]=RCK_sub(T,t,LRW,Qs,n);
+        dQdt(t)=b1; % Change rate of flow dQ/dt (L/T^2)
+        k(t)=b2; % Recession coefficient k (T^(n-2)/L^(n-1))
+        r2(t)=r; % Coefficient of determination
+      end
 
-    if n==1
-      y=log(Q(ti)); % dQ/Q
-    else
-      y=Q.^(1-n)/(1-n); % dQ/Q^n
-    end
-    if length(find(~isnan(y)))>.5*LRW
-      X=[ones(length(ti),1) ti];
+      parfor t=1:length(T)
+        b=RCK_sub1(T,t,LRW,k);
+        dk(t)=b; % change rate of k (T^(n-3)/L^(n-1))
+      end
 
-      [b,~,~,~,r]=regress(y,X);
-      k(t)=-b(2); % Recession coefficient k (T^(n-2)/L^(n-1))
-      r2(t)=r(1); % Coefficient of determination
-    end
+    case false
+      for t=1:length(T)
+        [b1,b2,r]=RCK_sub(T,t,LRW,Qs,n);
+        dQdt(t)=b1; % Change rate of flow dQ/dt (L/T^2)
+        k(t)=b2; % Recession coefficient k (T^(n-2)/L^(n-1))
+        r2(t)=r; % Coefficient of determination
+      end
 
-    y=k(ti);
-    if length(find(~isnan(y)))>.5*LRW
-      X=[ones(length(ti),1) ti];
-
-      [b,~,~,~,~]=regress(y,X);
-      dk(t)=log(abs(b(2))); % change rate of k (T^(n-3)/L^(n-1))
-    end
+      for t=1:length(T)
+        b=RCK_sub1(T,t,LRW,k);
+        dk(t)=b; % change rate of k (T^(n-3)/L^(n-1))
+      end
   end
-  save(TC,'dQdt','k','r2','dk');
 
+% Determine the response ratio
+  benb=[nan(LRW,1);movmean(Q,[LRW 0],'omitnan','Endpoints','discard')];
+  bena=[movmean(Q,[0 LRW],'omitnan','Endpoints','discard');nan(LRW,1)];
+  Rr=bena./benb;
+
+  save(ofn,'dQdt','k','r2','dk','Rr');
 else
-  load(TC);
+  load(ofn,'dQdt','r2','dk','Rr');
 end
 
-%% Determine the turning points
-% Envelope of baseflow
-ben=[nan(2*round(LSP),1);movmean(Q,[2*round(LSP) 2*round(LSP)],'omitnan','Endpoints',...
-    'discard');nan(2*round(LSP),1)];
-
-% RiPs and RePs
-if isempty(Qbi)
-%   ben=[nan(2*round(LRE),1);movmean(Q,[2*round(LRE) 2*round(LRE)],'omitnan','Endpoints',...
-%       'discard');nan(2*round(LRE),1)];
-  Qbi=ben;
-  Qbi(Qbi>Q)=Q(Qbi>Q);
-% else
-%   ben=Qbi;
+%% Find RiPs and RePs
+if LSP<LRW_i
+  sw=2*LRW_i;
+else
+  sw=round(2*LSP);
 end
-BFI=nansum(Qbi)/nansum(Q);
+ben=[nan(sw,1);movmean(Q,[sw sw],'omitnan','Endpoints','discard');nan(sw,1)]; % Envelope of baseflow
+if isnan(BFIi)
+  Qbi=min([ben Q],[],2);
+  k=isnan(Q) | isnan(Qbi);
+  Qbi(k)=NaN;
+  Q(k)=NaN;
+  BFIi=sum(Qbi,'omitnan')/sum(Q,'omitnan');
+end
 
-benb=[nan(LRW,1);movmean(Q,[LRW 0],'omitnan','Endpoints','discard')];
-bena=[movmean(Q,[0 LRW],'omitnan','Endpoints','discard');nan(LRW,1)];
-Rr=bena./benb;
-
-RiP=T(dQdt>1e-10 & Q<=ben & Rr>1/BFI);
-ReP=T(dk<Rnc & r2>r2M & Q<=ben);
+T=(1:length(Q))';
+RiP=T(dQdt>1e-10 & Q<=ben & Rr>1/BFIi);
+ReP=T(dk<log(Rnc) & r2>r2M & Q<=ben);
 % plot(Q);hold on;plot(pt.ReP,Q(pt.ReP),'*');hold on;plot(pt.RiP,Q(pt.RiP),'*');
-% plot(Q);hold on;plot(Qb);hold on;plot(ben)
+% plot(Q);hold on;plot(Qbi);hold on;plot(ben)
 pt.RiP=RiP;
 pt.ReP=ReP;
-clear RiP ReP
+clear RiP ReP bena benb Rr k
 
 %% Baseflow time series
-Qb=interp1(union(pt.RiP,pt.ReP),Q(union(pt.RiP,pt.ReP)),T');
+Qb=interp1(union(pt.RiP,pt.ReP),Q(union(pt.RiP,pt.ReP)),T);
 Qb(Qb<0)=0;
 Qb(Qb>Q)=Q(Qb>Q);
 Qb(isnan(Q))=NaN;
-BFIm=nansum(Qb)/nansum(Q); % Baseflow index
+BFIm=sum(Qb,'omitnan')/sum(Q,'omitnan'); % Baseflow index
 
 % Recession coefficient
-id1=~isnan(dk) & ~isnan(r2) & dQdt<-1e-8;
-[b,~,~,~,~]=regress(dQdt(id1),[ones(length(Q(id1)),1) Q(id1)]);
-% loglog(Q(id1),dQdt(id1),'.')
+try
+  id1=dk<=log(Rnc) & ~isnan(r2) & dQdt<-1e-8 & r2>r2M;
+  [b,~,~,~,r]=regress(dQdt(id1),[ones(length(Qs(id1)),1) Qs(id1)]);
+catch
+  id1=~isnan(dk) & ~isnan(r2) & dQdt<-1e-8 & r2>r2M;
+  [b,~,~,~,r]=regress(dQdt(id1),[ones(length(Qs(id1)),1) Qs(id1)]);
+end
+% loglog(Qs(id1),-dQdt(id1),'.');
 K=-b(2);
 end
+
+function [b1,b2,r]=RCK_sub(T,t,LRW,Qs,n)
+ti=(T(t)-(LRW-1)/2:T(t)+(LRW-1)/2)';
+
+y=Qs(ti);
+if length(find(~isnan(y)))>.5*LRW
+  X=[ones(length(ti),1) ti];
+  [b,~,~,~,~]=regress(y,X);
+  b1=b(2); % Change rate of flow dQ/dt (L/T^2)
+else
+  b1=NaN;
+end
+
+if n==1
+  y=log(Qs(ti)); % dQ/Q
+else
+  y=Qs.^(1-n)/(1-n); % dQ/Q^n
+end
+if length(find(~isnan(y)))>.5*LRW
+  X=[ones(length(ti),1) ti];
+  [b,~,~,~,r]=regress(y,X);
+  b2=-b(2); % Recession coefficient k (T^(n-2)/L^(n-1))
+  r=r(1); % Coefficient of determination
+else
+  b2=NaN;
+  r=NaN;
+end
+end
+
+function b=RCK_sub1(T,t,LRW,k)
+ti=(T(t)-(LRW-1)/2:T(t)+(LRW-1)/2)';
+
+y=k(ti);
+if length(find(~isnan(y)))>.5*LRW
+  X=[ones(length(ti),1) ti];
+  [b,~,~,~,~]=regress(y,X);
+  b=log(abs(b(2))); % change rate of k (T^(n-3)/L^(n-1))
+else
+  b=NaN;
+end
+end
+   
