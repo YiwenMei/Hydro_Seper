@@ -1,8 +1,8 @@
 % Yiwen Mei (yiwen.mei@uconn.edu)
-% CEE, University of Connecticut
-% Last updated on 9/22/2022
+% CEE, University of Connecticut, created 2016
+% Last updated on 8/24/2025
 
-%% Functionality:
+%% Functionality
 % This code performs recession analysis by fitting a recession model on streamflow
 % time series to
 %  1) locate turning points of the streamflow series;
@@ -12,28 +12,29 @@
 
 %% Inputs
 %  Q : streamflow time series for a basin (mm/h);
-% sc : number of time step in a day (e.g. if Q is hourly, sc is 24; if Q is daily,
-%       sc is 1);
+% sc : number of time step in a day (e.g., if Q is hourly, sc is 24; if Q is
+%       daily, sc is 1);
 %  A : basin size (km^2);
 % ofn: full name of the .mat file to store the flow time series characteristics
 %       (i.e. change rate of flow dQ/dt, recession coefficient k, logarithmic
 %       change rate of recesssion coefficient dk);
 
 % pflg: parallel flag (false/true - squential/parallel, default is false);
-% Rnc : threshold to define no changes in recession coefficient;
+% Rnc : threshold to define no changes in recession coefficient (defaults are
+%        1e-4 for hourly Q, 1e-7 for minute Q, 1e-2 for daily Q);
 % r2M : coefficient of determination threshold to define acceptable model fitting
 %        peformance;
 % BFIi: initial guess of baseflow index;
 %  n  : parameter determines the order of the recession model fitted to the streamflow
 %        time series (i.e., dQ/dt=-kQ^n);
 
-%% Outputs:
-% pt.RiP: potential time steps used to define start of flow events; 
-% pt.ReP: potential time steps used to define end of flow events;
-%   Qb  : baseflow time series formed by connecting points in pt with straight
-%         lines;
-%   K   : recession coefficient of the basin;
-%  BFIm : maximum baseflow index of the basin.
+%% Outputs
+%  pt : potential time steps used to define start (RiP) and end (ReP) points
+%        of flow events;
+%  Qb : baseflow time series formed by connecting points in pt with straight
+%        lines;
+%  K  : recession coefficient of the basin;
+% BFIm: maximum baseflow index of the basin.
 
 function [pt,Qb,BFIm,K,r,LSP]=RCK(Q,sc,A,ofn,varargin)
 %% Check the inputs
@@ -46,9 +47,15 @@ addRequired(ips,'sc',@(x) validateattributes(x,{'double'},{'nonempty'},mfilename
 addRequired(ips,'A',@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'A'));
 addRequired(ips,'ofn',@(x) validateattributes(x,{'char'},{'nonempty'},mfilename,'ofn'));
 
-addOptional(ips,'pflg',false,@(x) validateattributes(x,{'logical'},{'nonempty'},mfilename,'pflg'));
-addOptional(ips,'Rnc',1e-5,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'Rnc'));
-addOptional(ips,'r2M',.85,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'r2M'));
+addOptional(ips,'pflg',false,@(x) validateattributes(x,{'logical'},{'nonempty'},mfilename,'pflg')); 
+if sc==1
+  addOptional(ips,'Rnc',1e-2,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'Rnc'));
+elseif sc>1 && sc<=24
+  addOptional(ips,'Rnc',1e-4,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'Rnc'));
+elseif sc>24 && sc<=24*60
+  addOptional(ips,'Rnc',1e-7,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'Rnc'));
+end
+addOptional(ips,'r2M',.8,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'r2M'));
 addOptional(ips,'BFIi',NaN,@(x) validateattributes(x,{'double'},{'scalar'},mfilename,'BFIi'));
 addOptional(ips,'n',1,@(x) validateattributes(x,{'double'},{'scalar','integer'},mfilename,'n'));
 
@@ -157,8 +164,13 @@ catch
   id1=~isnan(dk) & ~isnan(r2) & dQdt<-1e-8 & r2>r2M;
   [b,~,~,~,r]=regress(dQdt(id1),[ones(length(Qs(id1)),1) Qs(id1)]);
 end
-% loglog(Qs(id1),-dQdt(id1),'.');
 K=-b(2);
+
+% tbl=array2table([log(Qs(id1)) log(-dQdt(id1)) dk(id1)]);
+% scatter(tbl,'Var1','Var2','filled','ColorVariable','Var3');
+% colorbar;
+% colormap('spring');
+% fprintf('%i\n',sum(id1));
 end
 
 function [b1,b2,r]=RCK_sub(T,t,LRW,Qs,n)
